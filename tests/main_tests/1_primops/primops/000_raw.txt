@@ -1,0 +1,13 @@
+parser-raw: 
+
+SBind "main" Nothing (App (App (Prim Add) (Num 1)) (Num 2))
+
+Inference steps:
+    1. inferProgram -> inferExp (App (App ...) (Num 2))
+        2. inferExp -> inferExp (App (Prim Add) (Num 1))
+            3. inferExp -> inferExp (Prim Add)
+                        -> Forall [] (Base Int `Arrow` (... `Arrow` ...))
+            4. specialize (Forall ...) ->
+
+            5. inferExp -> inferExp (Num 1) -> (Base Int, g)
+            
