@@ -1,0 +1,96 @@
+SBind "main" Nothing                         
+    (App                                    --> a1
+        (App                                --> b1 -- ERROR OCCURS AT INST
+            (Prim Eq)                       --> \FA [] Int -> (Int -> Bool)
+            (App                            --> c1 -- GAMMA ERROR:
+                                                -- h1 and i1 gets overwritten in gamma
+                (Prim Snd)                  --> \FA [d1, e1] (d1 * e1) -> e1 
+                (App                        --> f1 -- VERIFIED CORRECT
+                    (App                    --> g1 -- VERIFIED CORRECT
+                        (Con "Pair")        --> \FA [h1, i1] h1 -> (i1 -> (h1 * i1))
+                        (Con "True")        --> \FA [] Bool
+                    ) 
+                    (Num 5)                 --> Int
+                )
+            )
+        ) 
+        (Num 10)                            --> Int
+    )
+
+
+Same issue as original forum post on `main = fst (1, 2)`, however the 
+issue was solved by writing a parallel prod assign which rerouted the
+unify away from the broken function. (suspected to be the unifySingular)
+
+at level `c1`:
+gamma log: '''
+_GEnd
+ (Mark ) ||
+ (id: 'd1 ; ty: HOLE ) ||
+ (id: 'e1 ; ty: HOLE ) ||
+ (id: 'h1 ; ty: tyIdent: Base Bool ) ||
+ (id: 'i1 ; ty: tyIdent: Base Int ) ||
+ (id: 'f1 ; ty: tyIdent: Prod: (
+        tyIdent: FlexVar 'h1
+        tyIdent: FlexVar 'i1
+) ) ||
+ (id: 'g1 ; ty: tyIdent: Arrow: (
+        tyIdent: FlexVar 'i1
+        tyIdent: Prod: (
+        tyIdent: FlexVar 'h1
+        tyIdent: FlexVar 'i1
+)
+) ) || '''
+
+AFTER UNIFY:
+
+gamma log: '''
+_GEnd
+ (Mark ) ||
+ (id: 'd1 ; ty: tyIdent: Base Bool ) ||
+ (id: 'e1 ; ty: tyIdent: FlexVar 'i1 ) ||
+ (id: 'f1 ; ty: tyIdent: Prod: (
+        tyIdent: FlexVar 'h1
+        tyIdent: FlexVar 'i1
+) ) ||
+ (id: 'g1 ; ty: tyIdent: Arrow: (
+        tyIdent: FlexVar 'i1
+        tyIdent: Prod: (
+        tyIdent: FlexVar 'h1
+        tyIdent: FlexVar 'i1
+)
+) ) ||
+ (id: 'c1 ; ty: tyIdent: FlexVar 'e1 ) || '''
+
+
+As seen, the transition is the exact same as the post case. This time h1 and i1
+are overridden
+
+Also as usual, the fed-in arguments are:
+unify (gs :< c1^F) ((d1 * e1) -> e1) (f1^F -> c1^F)
+
+<=> unify (gs :< c1^F) (d1^F * e1^F) (f1^F)
+    <=> inst (gs :< c1^F) [] f1 (d1^F * e1^F)
+        <=> inst {gs = (gs' :< (g1, i1 -> (h1 * i1)))} [] f1 (d1^F * e1^F)
+            -- note that beta = g1, alpha = f1, ty = (d1^F * e1^F), ty' = i1 -> (h1 * i1)
+            unify (gs <>< []) (alpha[beta <- ty']) (ty[beta <- ty'])
+            == unify gs (f1 [g1 <- (i1 -> (h1 * i1))]) ((d1^F * e1^F) [g1 <- (i1 -> (h1 * i1))])
+            == unify gs (f1^F) (d1^F * e1^F)
+                <=> inst {gs = (gs' :< (f1, h1 * i1))} [] (f1) (d1^F * e1^F)
+                unify gs' (h1^F * i1^F) (d1^F * e1^F) 
+                    <=> unify gs' h1^F d1^F
+                    -- this will skip to the h1 entry in gamma, we denote this as gs'h
+                    <=> unify (gs'h :< (h1, Bool)) h1^F d1^F
+                        <=> unify gs' d1^f bool
+
+                        -- PROBLEM OCCURS: here d1 will be substituted with Bool,
+                        -- however h1 and i1 is now missing, since they are skipped
+                        -- during process of substitution
+
+                        -- This is an IMPLEMENTATION ERROR that I have made early on
+                        
+
+                        unify gs'' i1^F e1^F
+
+
+    unify (gs :< c1^F) (e1^F) (c1^F)

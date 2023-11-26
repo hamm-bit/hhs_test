@@ -1,0 +1,4 @@
+main =
+    let y =
+        recfun f x = x;
+    in y 1

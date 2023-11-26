@@ -1,0 +1,4 @@
+SBind "main" Nothing 
+    (Let [
+        SBind "g" Nothing (Recfun (MBind "f" "x" 
+            (If (Con "True") (Let [SBind "h" Nothing (Recfun (MBind "g" "y" (Var "x")))] (Var "h")) (Let [SBind "h" Nothing (Recfun (MBind "g" "y" (App (App (Prim Add) (Var "x")) (Num 1))))] (Var "h")))))] (Var "g"))

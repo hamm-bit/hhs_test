@@ -1,0 +1,14 @@
+SBind "main" Nothing 
+(Let [
+    SBind "f" Nothing 
+    (Recfun 
+        (MBind "f" "x" (App (Prim Neg) (Num 1)))
+    )]
+    (Let [
+        SBind "f" Nothing 
+        (Recfun 
+            (MBind "f" "x" (Con "True"))
+        )]
+    (App (Var "f") (Num 7))
+    )
+)

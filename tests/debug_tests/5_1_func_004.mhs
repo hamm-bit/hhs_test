@@ -1,0 +1,8 @@
+
+main
+     =
+    let f =
+           recfun f x = -1;
+    in let f =
+           recfun f x = True;
+    in f 7

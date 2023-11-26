@@ -1,0 +1,95 @@
+SBind "main" Nothing 
+    (App 
+        (Prim Fst) :: a1 : b1 * c1 -> b1
+        (App 
+            (App 
+                (Con "Pair") -> e1 
+                (Num 1) -> f1
+            ) 
+            (Num 2) -> g1
+        )
+    )
+
+
+Current problem: Until `unify` on the first level `App`,
+g is behaving correctly:
+
+fed-in input towards unify in App:
+e1 :: tyIdent: Arrow: (
+        tyIdent: Prod: (
+        tyIdent: FlexVar 'b1
+        tyIdent: FlexVar 'c1
+)
+        tyIdent: FlexVar 'b1
+)
+
+==================================
+e2 :: tyIdent: FlexVar 'd1 `Arrow` FlexVar 'a1
+
+
+log of gamma: '''
+_GEnd
+ (Mark ) ||
+ (id: 'b1 ; ty: HOLE ) ||
+ (id: 'c1 ; ty: HOLE ) ||
+ (id: 'f1 ; ty: tyIdent: Base Int ) ||
+ (id: 'g1 ; ty: tyIdent: Base Int ) ||
+ (id: 'd1 ; ty: tyIdent: Prod: (
+        tyIdent: FlexVar 'f1
+        tyIdent: FlexVar 'g1
+) ) ||
+ (id: 'e1 ; ty: tyIdent: Arrow: (
+        tyIdent: FlexVar 'g1
+        tyIdent: Prod: (
+        tyIdent: FlexVar 'f1
+        tyIdent: FlexVar 'g1
+)
+) ) || '''
+
+
+gamma AFTER unify: '''
+_GEnd
+ (Mark ) ||
+ (id: 'b1 ; ty: HOLE ) ||
+ (id: 'c1 ; ty: tyIdent: FlexVar 'b1 ) ||
+ (id: 'd1 ; ty: tyIdent: Prod: (
+        tyIdent: FlexVar 'f1
+        tyIdent: FlexVar 'g1
+) ) ||
+ (id: 'e1 ; ty: tyIdent: Arrow: (
+        tyIdent: FlexVar 'g1
+        tyIdent: Prod: (
+        tyIdent: FlexVar 'f1
+        tyIdent: FlexVar 'g1
+)
+) ) || '''
+
+As observed, f1 g1 which serve as a the supposed base type
+should have been unified with b1 and c1 before being substituted.
+Although more likely the re-substitution of 'd1 itself is a problem.
+'a1 is indeed dependent on 'b1
+
+This actually coincides with a log of other problems:
+    "DEFN a type that has already been defined"
+
+
+
+This case now returns correctly. However the fundamental 
+substitution problem is not fixed.
+
+We allude to an even simpler example of `InL` instead:
+
+SBind "main" Nothing
+    (App
+        (Con "Inl")
+        (Num 1)
+    )
+
+For all here is actually Meant to occur, since we know that 
+the left entry has to be an Int, however InR could be anything
+The compiler hence illustrates this by using a `Forall 'c1`
+
+The ultimate type is hence:
+`
+    main :: forall 'c1. Int + 'c1
+`

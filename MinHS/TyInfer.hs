@@ -64,9 +64,6 @@ infer program = runTC $ inferProgram BEmpty program
 -- | Perform unification of the given types
 unify :: Gamma -> Type -> Type -> TC Gamma
 
--- Reflexitivity
--- unify g (FlexVar a) (FlexVar a) = return g
-
 -- Inductivity
 unify g (Arrow t1 t2) (Arrow t1' t2') =
   -- NOTE: UNFINISHED
@@ -75,22 +72,11 @@ unify g (Arrow t1 t2) (Arrow t1' t2') =
     g'' <- unify g' t2 t2'
     return g''
 
-
--- Definition
--- And Reflexivity
-{-
-unify ( gs :< ((:=) alpha HOLE)) (FlexVar alpha) (FlexVar beta) =
-  -- NOTE: UNFINISHED
-  do
-    if (alpha /= beta)
-      then return extend ( gs) [(alpha, Defn (FlexVar beta))]
-      else return g
-    -- g' <- extend g [alpha]
--}
-
 -- Substitution
 unify ( gs :< ((:=) rho (Defn t))) (FlexVar alpha) (FlexVar beta) =
-  do unify ( gs) (S.substFlex ((=:) rho t) (FlexVar alpha)) (S.substFlex ((=:) rho t) (FlexVar beta))
+  do 
+    gs' <- unify ( gs) (S.substFlex ((=:) rho t) (FlexVar alpha)) (S.substFlex ((=:) rho t) (FlexVar beta))
+    return (gs' :< ((:=) rho $Defn t))
 
 -- Skip type declaration
 -- Added Definition and Reflexivity
@@ -100,8 +86,6 @@ unify ( gs :< ((:=) rho HOLE)) (FlexVar alpha) (FlexVar beta) =
       -- Definition
       then 
         return (extend ( gs) [(alpha, Defn (FlexVar beta))])
-        -- return (gs :< ((:=) alpha (Defn (FlexVar beta))))
-        -- return gs'
       -- Reflexivity
       else
         return ( gs :< ((:=) rho HOLE))
@@ -110,9 +94,9 @@ unify ( gs :< ((:=) rho HOLE)) (FlexVar alpha) (FlexVar beta) =
       then do 
         g' <- unify ( gs) (FlexVar alpha) (FlexVar beta)
         return (extend g' [(rho, HOLE)])
-      else 
-        error "Unify: SkipTy - extended rho overlaps with one of substituting alpha/beta"
-        -- return UnifyFailed ( gs :< ((:=) rho HOLE)) (FlexVar alpha) (FlexVar beta)
+      else
+        -- Fix: added symmetricity
+        unify (gs :< ((:=) rho HOLE)) (FlexVar beta) (FlexVar alpha)
 
 -- Skip directional marker
 unify ( gs :< Mark) (FlexVar alpha) (FlexVar beta) =
@@ -127,13 +111,62 @@ unify ( gs :< (TermVar x sigma)) (FlexVar alpha) (FlexVar beta) =
     return (gs' :< (TermVar x sigma))
 
 -- Instantiation
+-- symmetricity
+unify g ty (FlexVar alpha) = 
+  unify g (FlexVar alpha) ty
+
+-- main
 unify g (FlexVar alpha) ty =
-  -- NOTE: IMPLEMENT INSTANTIATION
   do
     g' <- inst g [] alpha ty
     return g'
 
-unify g t1 t2 = error "implement me!"
+
+unify g (Prod t1 t2) (Prod t1' t2') =
+  do
+    g' <- unify g t1 t1'
+    g'' <- unify g' t2 t2'
+    return g''
+
+unify g (Sum t1 t2) (Sum t1' t2') =
+  do
+    g' <- unify g t1 t1'
+    g'' <- unify g' t2 t2'
+    return g''
+
+-- i.e. Sum Prod Arrow etc..
+unify g t1 t2 =
+  do
+    g' <- unifySingular g t1
+    case t2 of
+      (Base bt) -> return g'
+      (FlexVar id) ->
+        error "Unify: GENERAL - flexvar in general should not happen" 
+      (RigidVar id) ->
+        error "Unify: GENERAL - rigidvar in general should not happen" 
+      _ ->
+        unifySingular g' t2
+
+-- Product type
+unifySingular :: Gamma -> Type -> TC Gamma
+unifySingular g t = 
+  do
+    case t of
+      (Base bt) -> return g
+      (Arrow ty1 ty2) ->
+        -- error "UnifySingular: INTENDED - arrow"
+        unify g ty1 ty2
+      (Sum ty1 ty2) ->
+        unify g ty1 ty2
+      (Prod ty1 ty2) ->
+        unify g ty1 ty2
+      (FlexVar id1) -> 
+        error "UnifySingular: GENERAL - flexvar in general should not happen" 
+      (RigidVar id) -> 
+        error "UnifySingular: GENERAL - rigidvar in general should not happen"
+      _ ->
+        error "UnifySingular: CRITICAL - type input corrupted"
+
 
 -- An example of function is actually prim ops
 -- i.e. 
@@ -142,41 +175,29 @@ unify g t1 t2 = error "implement me!"
 -- unify g t1 t2 = 
 
 
-
 -- | Instantiation the type variable a with the type t
 inst :: Gamma -> Suffix -> Id -> Type -> TC Gamma
-
--- Definition
-{-
-inst ( gs :< ((:=) alpha HOLE)) delta alpha ty =
-  do
-    idSet <- ffv ty
-    if (member alpha idSet)
-      then error "Inst: DEFN - redefining an already instantiated element"
-      else do
-        gs' <- extend ( gs) delta
-        return (gs' :< ((:=) alpha HOLE))
--}
 
 -- Dependencies or Skip type declaration
 -- Added definition
 inst ( gs :< ((:=) beta HOLE)) delta alpha ty =
-  -- idSet = ffv ty
-  if (beta /= alpha) 
-    -- Dependencies
-    then if (member beta (ffv ty))
-      then inst ( gs) ((beta, HOLE) : delta) alpha ty
-      else do
-        g' <- inst ( gs) delta alpha ty
-        return (extend g' [(beta, HOLE)])
-    -- Definition
-    else if (member alpha (ffv ty))
-      then 
-        error "Inst: DEFN - redefining an already instantiated element"
-        -- return InstFailed delta alpha ty
-      else do
-        gs' <- return (extend ( gs) delta)
-        return (gs' :< ((:=) alpha HOLE))
+  do
+    if (beta /= alpha) 
+      -- Dependencies
+      then do
+        if (member beta (ffv ty))
+        then do
+          inst ( gs) ((beta, HOLE) : delta) alpha ty
+        else do
+          g' <- inst ( gs) delta alpha ty
+          return (g' :< ((:=) beta (HOLE)))
+      -- Definition
+      else if (member alpha (ffv ty))
+        then 
+          return (gs :< ((:=) beta (HOLE)))
+        else do
+          gs' <- return (extend ( gs) delta)
+          return (gs' :< ((:=) alpha (Defn ty)))
 
 -- Substitution
 inst ( gs :< ((:=) beta (Defn ty'))) delta alpha ty =
@@ -196,7 +217,9 @@ inst ( gs :< (TermVar x sigma)) delta alpha ty =
     gs' <- inst ( gs) delta alpha ty
     return (gs' :< (TermVar x sigma))
 
-inst g zs a t = error "implement me!"
+inst g zs a t = 
+  error ("out-of-bound expression: \n gamma: \n" ++ (gammaIdent g) ++ "\n\n =================== \n\n delta: \n" ++ (suffIdent zs) ++ "\n\n =================== \n\n to-be-instantiated alpha: \n" ++ a ++ "\n\n =================== \n\n to-be-substituted type: \n" ++ (fst $ tyIdent t))
+
 
 gen :: Gamma -> Exp -> TC (Scheme, Gamma)
 gen g e =
@@ -230,42 +253,37 @@ genScheme entries ty betas =
 -- With respect until a delimiter (Entry)
 dropWithDelim :: Gamma -> Entry -> [Entry] -> (Gamma, [Entry])
 
--- Delimiter hit, delimiter is rejected
--- dropWithDelim (gs :< ent) ent delta = (gs, delta)
-
 -- Calm-the-compiler-down case
-dropWithDelim BEmpty ent delta =
+dropWithDelim BEmpty delim delta =
   error "dropWithDelim: empty Gamma input"
 
 -- Recursive case
-dropWithDelim (gs :< g) ent delta =
-  case g of
-    ent ->
-      (gs, delta)
-    _ ->
-      dropWithDelim gs ent (g : delta)
+dropWithDelim (gs :< g) delim delta =
+  if (g == delim)
+    then (gs, delta)
+    else dropWithDelim gs delim (g : delta)
 
 inferProgram :: Gamma -> Program -> TC (Program, Gamma)
 inferProgram g (SBind x _ e) =
-  do 
-    (t, g') <- inferExp g e
-    return (SBind x (Just $ Forall [] t) e, g')
--- error "implement me!"
+  do
+    (sigma_out, g') <- gen g e
+    return (SBind x (Just sigma_out) e, g')
 
 inferExp :: Gamma -> Exp -> TC (Type, Gamma)
 
 -- =================== Type cases: 
 -- Variable
 inferExp g (Var x) =
-  -- NOTE: UNFINISHED
-  -- ADDITIONAL NOTE: I DONT KNOW WHAT I AM DOING
   do
-    ty <- return (lookupType g x)
-    if (ty /= (FlexVar x))
-    then do alpha_sch <- lookupIdList g ty
-            (ty', suff) <- specialise alpha_sch
-            return (ty', (extend g suff))
-    else error "InferExp: Variable - variable not in scope"
+    result <- lookupIdList g x
+    -- error (gammaIdent g)
+    case result of
+      (Just alpha_sch) -> do
+        -- Valid variable
+        (ty', suff) <- specialise alpha_sch
+        return (ty', (extend g suff))
+      _ ->
+        error "InferExp: Variable - variable not in scope"
 
 -- Integer
 inferExp g (Num n) = return (Base Int, g)
@@ -290,8 +308,6 @@ inferExp g (Prim o) =
 
 -- Apply operator
 inferExp g1 (App e1 e2) =
-  -- NOTE: UNFINISHED
-  -- TODO: generate fresh alpha for free var decl
   do
     alpha <- freshId
     (ty1, g2) <- inferExp g1 e1
@@ -329,7 +345,7 @@ inferExp g1 (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2]) =
 
     (ty2, g5') <-
       inferExp ((g4 <>< delta) :< (TermVar y beta_sch)) e2
-    (g5, delta') <- return (dropWithDelim g5' (TermVar x beta_sch) [])
+    (g5, delta') <- return (dropWithDelim g5' (TermVar y beta_sch) [])
 
     g6 <- unify (g5 <>< delta') ty1 ty2
     return (ty1, g6)
@@ -338,11 +354,6 @@ inferExp g1 (Case e _) = typeError MalformedAlternatives
 
 -- Recfun
 inferExp g1 (Recfun (MBind f x e)) =
-  -- NOTE: UNFINISHED
-  -- TODO: generate fresh alpha and beta for free var decl
-  --       additionally term var (x.alpha), (f.beta) for
-  --       substitution
-  -- ADDITIONAL NOTE: I DONT KNOW WHAT THE FELLTHROUGH IM DOING
   do
     alpha <- freshId
     beta <- freshId
@@ -355,7 +366,7 @@ inferExp g1 (Recfun (MBind f x e)) =
     (g2'', delta) <- 
       return (dropWithDelim g2' (TermVar f beta_sch) [])
     (g2, _) <-
-      return (dropWithDelim g2'' (TermVar f alpha_sch) [])
+      return (dropWithDelim g2'' (TermVar x alpha_sch) [])
 
     g3 <- unify (g2 <>< delta) (FlexVar beta) (Arrow (FlexVar alpha) ty) 
     return ((FlexVar beta), g3)
@@ -372,11 +383,6 @@ inferExp g1 (Let [(SBind x sigma e1)] e2) =
 
 inferExp g e = error "implement me!"
 
--- -- Note: this is the only case you need to handle for case expressions
--- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
--- inferExp g (Case e _) = typeError MalformedAlternatives
-
-
 -- Helper function starts
 
 -- lookup entries
@@ -392,17 +398,104 @@ lookupType ( gs :< g) a =
           then (FlexVar a)
           else lookupType ( gs) a      
 
-lookupIdList :: Gamma -> Type -> TC Scheme
-lookupIdList ( gs :< g) ty =
+-- scheme only, dedicated helper for Infer: VAR
+lookupIdList :: Gamma -> Id -> TC (Maybe Scheme)
+lookupIdList ( gs :< g) x =
   do
     case g of
       TermVar id1 (Forall ids ty') ->
-        if (ty' == ty)
-          then return (Forall ids ty')
-          else if (gs == BEmpty)
-            then return (Forall [] ty)
-            else lookupIdList ( gs) ty
+        if (id1 == x)
+          then return (Just (Forall ids ty'))
+          else if gs == BEmpty
+            then return $ Nothing
+            else lookupIdList gs x
       _ ->
         if (gs == BEmpty)
-          then return (Forall [] ty)
-          else lookupIdList ( gs) ty
+          then return $ Nothing
+          else lookupIdList gs x
+
+-- Debug Function for type identification
+tyIdent :: Type -> (String, Type)
+tyIdent ty =
+  case ty of
+    Arrow t1 t2 ->
+      let (str1, ty1) = tyIdent t1
+          (str2, ty2) = tyIdent t2
+      in ("tyIdent: Arrow: (\n\t" ++ str1 ++ "\n\t" ++ str2 ++ "\n)", ty)
+    Prod t1 t2 ->
+      let (str1, ty1) = tyIdent t1
+          (str2, ty2) = tyIdent t2
+      in ("tyIdent: Prod: (\n\t" ++ str1 ++ "\n\t" ++ str2 ++ "\n)", ty)
+      -- error "tyIdent: Prod"
+      -- tyIdent t2
+    Sum _ _ ->
+      error "tyIdent: Sum"
+    Base ty1 ->
+      if (ty1 == Unit)
+        then ("tyIdent: Base Unit", ty)
+        else if (ty1 == Bool)
+            then ("tyIdent: Base Bool", ty)
+            else ("tyIdent: Base Int", ty)
+    FlexVar id ->
+      (("tyIdent: FlexVar " ++ id), ty)
+      -- error ("tyIdent: FlexVar " ++ id)
+    RigidVar id ->
+      (("tyIdent: FlexVar " ++ id), ty)
+      -- error ("tyIdent: RigidVar " ++ id)
+    _ ->
+      error ("tyIdent: CRITICAL TYPE FAILURE")
+
+
+-- Debug function for suffix unwrapping
+suffIdent :: Suffix -> String
+suffIdent [] = "_suffEnd"
+suffIdent ((id, (Defn ty)) : []) = 
+  ("(id: " ++ id ++ " ; ty: " ++ (fst (tyIdent ty)) ++ " ) || _suffEnd")
+
+suffIdent ((id, HOLE) : []) =
+  ("(id: " ++ id ++ " ; ty: HOLE" {- ++ (fst (tyIdent ty))-} ++ " ) || _suffEnd")
+
+suffIdent ((id, (Defn ty)) : suffs) =
+  ("(id: " ++ id ++ " ; ty: " ++ (fst (tyIdent ty)) ++ " ) || " ++ suffIdent (suffs))
+
+suffIdent ((id, HOLE) : suffs) =
+  ("(id: " ++ id ++ " ; ty: HOLE" {- ++ (fst (tyIdent ty))-} ++ " ) || " ++ suffIdent (suffs))
+
+
+-- Debug function for delta unwrapping
+deltaIdent :: [Entry] -> String
+deltaIdent [] = "_DeltaEnd"
+deltaIdent (((:=) id (Defn ty)) : deltas) = 
+  ("(id: " ++ id ++ " ; ty: " ++ (fst (tyIdent ty)) ++ ") || \n" ++ (deltaIdent deltas))
+
+deltaIdent (((:=) id HOLE) : deltas) =
+  ("(id: " ++ id ++ " ; ty: HOLE) || \n" ++ (deltaIdent deltas))
+
+deltaIdent ((TermVar id (Forall ids ty)) : deltas) =
+  ("(id: " ++ id ++ " ; scheme: " ++ "[" ++ (unwords ids) ++ "] ; ty: " ++ (fst (tyIdent ty)) ++ " ) || \n" ++ (deltaIdent deltas))
+
+deltaIdent (Mark : deltas) =
+  ("(Mark ) || \n" ++ (deltaIdent deltas))
+
+
+-- Debug function for gamma debugging
+gammaIdent :: Gamma -> String
+gammaIdent (BEmpty) = ("NOTE: backward list printing starts from the end\n_GEnd")
+gammaIdent (gs :< ((:=) id (Defn ty))) = 
+  ((gammaIdent gs) ++ "\n (id: " ++ id ++ " ; ty: " ++ (fst (tyIdent ty)) ++ " ) || ")
+
+gammaIdent (gs :< ((:=) id HOLE)) = 
+  ((gammaIdent gs) ++ "\n (id: " ++ id ++ " ; ty: HOLE" {- ++ (fst (tyIdent ty))-} ++ " ) || ")
+
+gammaIdent (gs :< (TermVar id (Forall ids ty))) = 
+  ((gammaIdent gs) ++ "\n (id: " ++ id ++ " ; scheme: " ++ "[" ++ (unwords ids) ++ "] ; ty: " ++ (fst (tyIdent ty)) ++ " ) || ")
+
+gammaIdent (gs :< Mark) = 
+  ((gammaIdent gs) ++ "\n (Mark" {- ++ (fst (tyIdent ty))-} ++ " ) || ")
+
+
+-- Debug function for scheme debugging
+sigmaIdent :: Scheme -> String
+sigmaIdent (Forall ids ty) =
+  ("ids: [" ++ (unwords ids) ++ "] || ty: " ++ (fst $ tyIdent ty))
+
